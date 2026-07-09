@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# PRECHECK-CHROME-MIGRATION  (v2.1 + DELTA 1-9)
+# PRECHECK-CHROME-MIGRATION  (v2.3 + DELTA 1-9)
+# v2.3 fix: also strip standalone nav-doc CSS comments (e.g. Korean banner
+# "/* ===== ... .portal-nav ... ===== */") that reference the removed component
+# by name but aren't themselves prefixed rules -- caught by real-server dry-run.
 # Migrates /var/www/f29/precheck/*/index.html into the shared f29-chrome contract.
 # Read-first, dry-run-gated, atomic 7-file apply. HTML: NO node --check.
 #
@@ -31,6 +34,13 @@ SETLANG_ANCHOR = "window.setLang=function(l){applyHF(l);};"
 # footer CSS prefixes (DELTA 8: report, non-fatal). Body ".disclaimer" is NOT here.
 FOOT_CSS_PREFIXES = (".foot-in", ".foot-brand", ".foot-contact", ".foot-dis", ".foot-copy", "footer{")
 NAV_CSS_PREFIX = ".portal-nav"
+# v2.3: standalone documentation comments (e.g. a CJK banner like
+# "/* ===== ... .portal-nav ... ===== */") reference the removed component by name
+# but are not CSS rules themselves, so the prefix check above misses them. Match
+# structurally: full single-line /* ... */ comment containing one of these ASCII
+# terms (no CJK literal typed here -- we only match the ASCII substring embedded
+# in whatever surrounding text the comment has).
+NAV_COMMENT_TERMS = ("portal-nav", "navlinks", "nav-lang")
 
 def c(text, pat):
     return text.count(pat)
@@ -40,7 +50,7 @@ class Abort(Exception):
 
 def transform(path, text):
     """Return (new_text, report). Raises Abort on any fatal precondition."""
-    rep = {"path": path, "before": {}, "after": {}, "foot_css_removed": [], "notes": []}
+    rep = {"path": path, "before": {}, "after": {}, "foot_css_removed": [], "nav_comment_removed": [], "notes": []}
     is_index = path.endswith("/precheck/index.html")
 
     # ---------- BEFORE counts ----------
@@ -128,6 +138,13 @@ def transform(path, text):
         if s.startswith(NAV_CSS_PREFIX):
             continue
         if s.startswith("@media") and ".portal-nav" in s:
+            continue
+        # v2.3: standalone comment lines documenting the removed nav component
+        # (e.g. "/* ===== ... .portal-nav ... ===== */"). Structural match only:
+        # full-line /* ... */ comment containing an ASCII nav term. Mandatory
+        # removal (after-check hard-requires portal-nav/navlinks/nav-lang == 0).
+        if s.startswith("/*") and s.endswith("*/") and any(term in s for term in NAV_COMMENT_TERMS):
+            rep["nav_comment_removed"].append(s)
             continue
         # footer CSS (report, non-fatal)
         if any(s.startswith(p) for p in FOOT_CSS_PREFIXES):
@@ -231,6 +248,9 @@ def main():
         if path.endswith("/precheck/index.html"):
             print(f"  index preserve CTX_COPY={a['CTX_COPY']} precheck_open={a['precheck_open']} "
                   f"GA4={a['G-2GH6LTYB3R']} URLSearchParams={a['URLSearchParams']}")
+        print(f"  nav-doc comments removed (mandatory, ASCII-term matched):")
+        for l in rep["nav_comment_removed"]:
+            print(f"      | {l}")
         print(f"  footer CSS lines removed (non-fatal, review):")
         for l in rep["foot_css_removed"]:
             print(f"      | {l}")
