@@ -46,7 +46,7 @@ def transform(path, text):
     # ---------- BEFORE counts ----------
     b = rep["before"]
     for pat in ['f29-chrome.js', 'id="f29-header"', 'id="f29-footer"', MARKER,
-                '<nav class="portal-nav">', '</nav>', '<footer>', '</footer>',
+                '<nav class="portal-nav">', '</nav>', '<nav class="nav">', '<footer>', '</footer>',
                 SETLANG_ANCHOR, 'Copyright \u00a9', 'contactLabel', 'disclaimer:"F29',
                 '<p class="disclaimer">', '\uad50\uc721\u00b7\uc790\uae30\uc810\uac80',
                 'CTX_COPY', 'precheck_open', 'G-2GH6LTYB3R', 'URLSearchParams']:
@@ -61,7 +61,12 @@ def transform(path, text):
     need('id="f29-footer"', 0)
     need(MARKER, 0)
     need('<nav class="portal-nav">', 1)
-    need('</nav>', 1)                 # DELTA 9: !=1 -> abort (noscript/nested nav guard)
+    # v2.2: sub-pages carry an internal step nav (<nav class="nav">...</nav>), so global
+    # </nav> may be 2. We only remove the portal header nav (its opening tag is unique,
+    # gated ==1 above) up to the NEAREST following </nav>. Body nav is preserved.
+    # DELTA 9 intent kept: portal opener must be unique, and a closing </nav> must exist.
+    if b['</nav>'] < 1:
+        raise Abort(f"{path}: no </nav> found after portal-nav open")
     need('<footer>', 1)
     need('</footer>', 1)             # DELTA 9
     need(SETLANG_ANCHOR, 1)
@@ -139,7 +144,7 @@ def transform(path, text):
     # ---------- AFTER counts ----------
     a = rep["after"]
     for pat in ['f29-chrome.js?v=20260709b', 'data-active="pb"', 'id="f29-header"',
-                'id="f29-footer"', 'portal-nav', 'navlinks', '<footer>',
+                'id="f29-footer"', 'portal-nav', 'navlinks', '<nav class="nav">', '</nav>', '<footer>',
                 'id="footContact"', 'id="footCopy"', 'id="disclaimer"',
                 'Copyright \u00a9', 'contactLabel', 'disclaimer:"F29', 'f29:lang',
                 MARKER, '<p class="disclaimer">', '\uad50\uc721\u00b7\uc790\uae30\uc810\uac80',
@@ -158,6 +163,12 @@ def transform(path, text):
     for pat, val in exact.items():
         if a[pat] != val:
             raise Abort(f"{path}: AFTER '{pat}' expected {val}, got {a[pat]}")
+    # v2.2 body-nav preservation: internal <nav class="nav"> untouched, and exactly the
+    # ONE portal nav removed (total </nav> drops by precisely 1).
+    if a['<nav class="nav">'] != b['<nav class="nav">']:
+        raise Abort(f"{path}: body <nav class=\"nav\"> changed {b['<nav class=\"nav\">']}->{a['<nav class=\"nav\">']}")
+    if a['</nav>'] != b['</nav>'] - 1:
+        raise Abort(f"{path}: </nav> expected {b['</nav>']-1} after removing portal nav, got {a['</nav>']}")
     # body preservation invariants (DELTA 2)
     if a['<p class="disclaimer">'] != b['<p class="disclaimer">']:
         raise Abort(f"{path}: body <p class=\"disclaimer\"> changed {b['<p class=\"disclaimer\">']}->{a['<p class=\"disclaimer\">']}")
@@ -205,7 +216,8 @@ def main():
         print(f"\n----- {path} -----")
         b, a = rep["before"], rep["after"]
         print(f"  before contactLabel={b['contactLabel']} disclaimer:\"F29={b['disclaimer:\"F29']} "
-              f"Copyright={b['Copyright \u00a9']} </nav>={b['</nav>']} </footer>={b['</footer>']}")
+              f"Copyright={b['Copyright \u00a9']} portal_nav={b['<nav class=\"portal-nav\">']} "
+              f"total_</nav>={b['</nav>']} body_nav={b['<nav class=\"nav\">']} </footer>={b['</footer>']}")
         print(f"  before_copyright={b['Copyright \u00a9']}  after_copyright={a['Copyright \u00a9']}")
         print(f"  after chrome={a['f29-chrome.js?v=20260709b']} pb={a['data-active=\"pb\"']} "
               f"hdr={a['id=\"f29-header\"']} ftr={a['id=\"f29-footer\"']} "
